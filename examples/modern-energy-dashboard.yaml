@@ -1,0 +1,907 @@
+# Modern Energy Dashboard - Sungrow SG5.0RS with Price-Aware Curtailment
+# Combines energy monitoring, solar production, battery management, and automated curtailment
+#
+# This dashboard provides a comprehensive view of your energy system including:
+# - Real-time energy flow visualization
+# - Price-aware curtailment controls
+# - Solar production monitoring
+# - Battery management
+# - Historical analytics
+#
+# Installation:
+# 1. Copy this entire YAML
+# 2. Go to Settings → Dashboards → Add Dashboard → New dashboard
+# 3. Three dots (⋮) → Edit Dashboard → Raw configuration editor
+# 4. Paste this YAML
+# 5. Save
+
+views:
+  # ============================================================================
+  # VIEW 1: ENERGY FLOW & OVERVIEW
+  # ============================================================================
+  - title: Energy Flow
+    path: energy-flow
+    icon: mdi:home-lightning-bolt
+    type: sections
+    sections:
+      # Real-time Status Section
+      - type: grid
+        cards:
+          # Energy Flow Card (if you have Energy integration configured)
+          - type: energy-date-selection
+          - type: energy-distribution
+            link_dashboard: false
+
+          # Current Power Flow
+          - type: vertical-stack
+            cards:
+              - type: markdown
+                content: |
+                  # ⚡ Live Power Flow
+                card_mod:
+                  style: |
+                    ha-card {
+                      background: none;
+                      box-shadow: none;
+                    }
+
+              - type: horizontal-stack
+                cards:
+                  # Solar Production
+                  - type: gauge
+                    entity: sensor.inverter_total_dc_power
+                    name: Solar
+                    min: 0
+                    max: 5000
+                    needle: true
+                    severity:
+                      green: 1000
+                      yellow: 500
+                      red: 0
+                    unit: W
+
+                  # Home Load
+                  - type: gauge
+                    entity: sensor.inverter_load_power
+                    name: Home Load
+                    min: 0
+                    max: 5000
+                    needle: true
+                    severity:
+                      green: 0
+                      yellow: 2500
+                      red: 4000
+                    unit: W
+
+                  # Battery
+                  - type: gauge
+                    entity: sensor.powerwall_percentage_charged
+                    name: Battery
+                    min: 0
+                    max: 100
+                    needle: true
+                    severity:
+                      green: 70
+                      yellow: 40
+                      red: 20
+                    unit: '%'
+
+              # Grid Status
+              - type: horizontal-stack
+                cards:
+                  - type: entity
+                    entity: sensor.inverter_meter_power
+                    name: Grid
+                    icon: mdi:transmission-tower
+                    card_mod:
+                      style: |
+                        :host {
+                          {% if states('sensor.inverter_meter_power')|float(0) > 0 %}
+                            --card-mod-icon-color: green;
+                          {% elif states('sensor.inverter_meter_power')|float(0) < 0 %}
+                            --card-mod-icon-color: red;
+                          {% else %}
+                            --card-mod-icon-color: grey;
+                          {% endif %}
+                        }
+
+                  - type: entity
+                    entity: binary_sensor.exporting_power
+                    name: Export Status
+
+                  - type: entity
+                    entity: binary_sensor.importing_power
+                    name: Import Status
+
+      # Price & Curtailment Status
+      - type: grid
+        title: 💰 Pricing & Automation
+        cards:
+          # Current Pricing
+          - type: entities
+            entities:
+              - entity: sensor.sandhurst_estate_feed_in_price
+                name: Feed-in Price
+                icon: mdi:currency-usd
+                card_mod:
+                  style: |
+                    :host {
+                      {% if states('sensor.sandhurst_estate_feed_in_price')|float(0) <= 0 %}
+                        --card-mod-icon-color: red;
+                      {% elif states('sensor.sandhurst_estate_feed_in_price')|float(0) > 0.05 %}
+                        --card-mod-icon-color: green;
+                      {% else %}
+                        --card-mod-icon-color: orange;
+                      {% endif %}
+                    }
+              - entity: input_boolean.sungrow_curtailment_enabled
+                name: Auto Curtailment
+              - entity: sensor.inverter_run_mode
+                name: Inverter Status
+            state_color: true
+
+          # Curtailment Status Card
+          - type: markdown
+            content: |
+              ## 🤖 Curtailment Status
+
+              {% set battery = states('sensor.powerwall_percentage_charged')|float(0) %}
+              {% set price = states('sensor.sandhurst_estate_feed_in_price')|float(0) %}
+              {% set exporting = states('sensor.inverter_meter_power')|float(0) %}
+              {% set threshold_low = states('input_number.sungrow_curtailment_price_threshold_low')|float(0) %}
+              {% set threshold_high = states('input_number.sungrow_restart_price_threshold_high')|float(0) %}
+              {% set battery_threshold = states('input_number.sungrow_curtailment_powerwall_threshold')|float(99) %}
+
+              **Conditions:**
+              - Battery: {{ battery }}% {% if battery >= battery_threshold %}✅{% else %}❌{% endif %} (need ≥{{ battery_threshold }}%)
+              - Price: ${{ price }}/kWh {% if price <= threshold_low %}✅{% else %}❌{% endif %} (curtail ≤${{ threshold_low }})
+              - Exporting: {{ exporting }}W {% if exporting > 100 %}✅{% else %}❌{% endif %} (need >100W)
+
+              {% if battery >= battery_threshold and price <= threshold_low and exporting > 100 %}
+              **🚫 CURTAILMENT CONDITIONS MET**
+              Inverter should shutdown in ~3 minutes
+              {% elif battery < 95 or price > threshold_high or exporting < 50 %}
+              **✅ RESTART CONDITIONS MET**
+              Inverter should re-enable soon
+              {% else %}
+              **⏸️ STANDBY**
+              Normal operation
+              {% endif %}
+            card_mod:
+              style: |
+                ha-card {
+                  background: linear-gradient(135deg, rgba(255,193,7,0.1) 0%, rgba(76,175,80,0.1) 100%);
+                }
+
+      # Energy Summary Today
+      - type: grid
+        title: 📊 Today's Summary
+        cards:
+          - type: statistic
+            entity: sensor.inverter_daily_power_yield_raw
+            name: Solar Generated
+            period:
+              calendar:
+                period: day
+            stat_type: max
+            chart_type: line
+
+          - type: statistic
+            entity: sensor.inverter_total_exported_energy
+            name: Exported
+            period:
+              calendar:
+                period: day
+            stat_type: change
+            chart_type: line
+
+          - type: statistic
+            entity: sensor.inverter_total_imported_energy
+            name: Imported
+            period:
+              calendar:
+                period: day
+            stat_type: change
+            chart_type: line
+
+          - type: markdown
+            content: |
+              ## 💵 Estimated Savings
+
+              {% set daily_yield = states('sensor.inverter_daily_power_yield_raw')|float(0) %}
+              {% set avg_price = 0.25 %}
+              {% set estimated = (daily_yield * avg_price)|round(2) %}
+
+              **Today:** ~${{ estimated }}
+              **This Month:** ~${{ (estimated * 30)|round(2) }}
+              **This Year:** ~${{ (estimated * 365)|round(2) }}
+
+              *(Based on avg ${{ avg_price }}/kWh)*
+
+  # ============================================================================
+  # VIEW 2: CURTAILMENT CONTROL
+  # ============================================================================
+  - title: Curtailment Control
+    path: control
+    icon: mdi:solar-power
+    type: sections
+    sections:
+      # Manual Controls
+      - type: grid
+        title: 🎛️ Manual Control
+        cards:
+          - type: entities
+            entities:
+              - entity: input_select.set_sg_inverter_run_mode
+                name: Inverter Run Mode
+              - entity: sensor.inverter_run_mode
+                name: Current State
+              - entity: sensor.inverter_work_state
+                name: Work State
+              - entity: sensor.inverter_run_state_register
+                name: Raw Register Value
+            state_color: true
+
+          - type: button
+            entity: input_select.set_sg_inverter_run_mode
+            name: Emergency Stop
+            icon: mdi:stop-circle
+            tap_action:
+              action: call-service
+              service: input_select.select_option
+              service_data:
+                option: Shutdown
+              target:
+                entity_id: input_select.set_sg_inverter_run_mode
+            hold_action:
+              action: none
+            show_state: false
+            card_mod:
+              style: |
+                ha-card {
+                  background: rgba(244,67,54,0.2);
+                }
+
+          - type: button
+            entity: input_select.set_sg_inverter_run_mode
+            name: Enable Inverter
+            icon: mdi:play-circle
+            tap_action:
+              action: call-service
+              service: input_select.select_option
+              service_data:
+                option: Enabled
+              target:
+                entity_id: input_select.set_sg_inverter_run_mode
+            hold_action:
+              action: none
+            show_state: false
+            card_mod:
+              style: |
+                ha-card {
+                  background: rgba(76,175,80,0.2);
+                }
+
+      # Automation Settings
+      - type: grid
+        title: ⚙️ Automation Settings
+        cards:
+          - type: entities
+            entities:
+              - entity: input_boolean.sungrow_curtailment_enabled
+                name: Enable Price-Based Curtailment
+              - type: divider
+              - entity: input_number.sungrow_curtailment_price_threshold_low
+                name: Shutdown Below ($/kWh)
+              - entity: input_number.sungrow_restart_price_threshold_high
+                name: Restart Above ($/kWh)
+              - type: divider
+              - entity: input_number.sungrow_curtailment_powerwall_threshold
+                name: Battery Threshold (%)
+            state_color: true
+
+          # Explanation Card
+          - type: markdown
+            content: |
+              ## 🧠 How It Works
+
+              ### Shutdown Conditions (ALL must be true for 3 min):
+              1. 🔋 Battery ≥ threshold
+              2. ⚡ Exporting >100W to grid
+              3. 💰 Feed-in price ≤ shutdown threshold
+              4. 🤖 Automation enabled
+
+              ### Restart Conditions (ANY triggers immediately):
+              1. 🔋 Battery <95%
+              2. 🏠 Home consuming (not exporting)
+              3. 📥 Importing from grid
+              4. 💰 Price >restart threshold
+
+              ### Safety Features:
+              - ☀️ Auto-restart at sunset (ready for tomorrow)
+              - 🕐 3-min delay prevents price flapping
+              - 🎛️ Manual override always available
+              - 📊 Full trace logging in automations
+
+      # Current Conditions Monitor
+      - type: grid
+        title: 📡 Current Conditions
+        cards:
+          - type: entities
+            entities:
+              - entity: sensor.powerwall_percentage_charged
+                name: Powerwall Charge
+              - entity: sensor.sandhurst_estate_feed_in_price
+                name: Feed-in Price
+              - entity: sensor.inverter_meter_power
+                name: Grid Power
+              - entity: sensor.inverter_total_dc_power
+                name: Solar Production
+              - entity: sensor.inverter_load_power
+                name: Home Load
+              - type: divider
+              - entity: binary_sensor.pv_generating
+                name: PV Generating
+              - entity: binary_sensor.exporting_power
+                name: Exporting
+              - entity: binary_sensor.importing_power
+                name: Importing
+            state_color: true
+
+          # Visual Status Indicator
+          - type: markdown
+            content: |
+              {% set mode = states('sensor.inverter_run_mode') %}
+              {% set auto = states('input_boolean.sungrow_curtailment_enabled') %}
+
+              <div style="text-align: center; padding: 20px;">
+                <div style="font-size: 48px; margin-bottom: 10px;">
+                  {% if mode == 'Shutdown' %}
+                    🛑
+                  {% elif mode == 'Enabled' %}
+                    ✅
+                  {% else %}
+                    ⏸️
+                  {% endif %}
+                </div>
+                <div style="font-size: 24px; font-weight: bold;">
+                  {{ mode }}
+                </div>
+                <div style="margin-top: 10px; color: grey;">
+                  Auto-curtailment: {% if auto == 'on' %}ENABLED{% else %}DISABLED{% endif %}
+                </div>
+              </div>
+
+  # ============================================================================
+  # VIEW 3: SOLAR MONITORING
+  # ============================================================================
+  - title: Solar Details
+    path: solar
+    icon: mdi:solar-panel
+    type: sections
+    sections:
+      # PV String Performance
+      - type: grid
+        title: 🌞 PV Strings (MPPT)
+        cards:
+          # MPPT1
+          - type: entities
+            entities:
+              - entity: sensor.inverter_mppt1_power
+                name: Power
+              - entity: sensor.inverter_mppt1_voltage
+                name: Voltage
+              - entity: sensor.inverter_mppt1_current
+                name: Current
+            title: MPPT 1
+            state_color: true
+
+          # MPPT2
+          - type: entities
+            entities:
+              - entity: sensor.inverter_mppt2_power
+                name: Power
+              - entity: sensor.inverter_mppt2_voltage
+                name: Voltage
+              - entity: sensor.inverter_mppt2_current
+                name: Current
+            title: MPPT 2
+            state_color: true
+
+          # Total DC
+          - type: gauge
+            entity: sensor.inverter_total_dc_power
+            name: Total DC Power
+            min: 0
+            max: 5000
+            needle: true
+            severity:
+              green: 2000
+              yellow: 1000
+              red: 0
+
+          # String Balance
+          - type: markdown
+            content: |
+              ## ⚖️ String Balance
+
+              {% set mppt1 = states('sensor.inverter_mppt1_power')|float(0) %}
+              {% set mppt2 = states('sensor.inverter_mppt2_power')|float(0) %}
+              {% set total = mppt1 + mppt2 %}
+              {% set pct1 = ((mppt1 / total * 100) if total > 0 else 0)|round(1) %}
+              {% set pct2 = ((mppt2 / total * 100) if total > 0 else 0)|round(1) %}
+
+              **MPPT1:** {{ mppt1 }}W ({{ pct1 }}%)
+              <progress value="{{ mppt1 }}" max="{{ total if total > 0 else 1 }}"></progress>
+
+              **MPPT2:** {{ mppt2 }}W ({{ pct2 }}%)
+              <progress value="{{ mppt2 }}" max="{{ total if total > 0 else 1 }}"></progress>
+
+              {% if (pct1 - pct2)|abs > 20 and total > 500 %}
+              ⚠️ Strings unbalanced - check for shading or issues
+              {% elif total < 100 %}
+              🌙 Low/no production
+              {% else %}
+              ✅ Strings balanced
+              {% endif %}
+
+      # AC Output & Grid
+      - type: grid
+        title: ⚡ AC Output & Grid
+        cards:
+          - type: entities
+            entities:
+              - entity: sensor.inverter_total_active_power
+                name: Active Power
+              - entity: sensor.inverter_total_apparent_power
+                name: Apparent Power
+              - entity: sensor.inverter_total_reactive_power
+                name: Reactive Power
+              - entity: sensor.inverter_power_factor
+                name: Power Factor
+              - entity: sensor.inverter_grid_frequency
+                name: Grid Frequency
+            title: AC Output
+            state_color: true
+
+          - type: entities
+            entities:
+              - entity: sensor.inverter_meter_power
+                name: Grid Power
+              - entity: sensor.inverter_total_exported_energy
+                name: Total Exported
+              - entity: sensor.inverter_total_imported_energy
+                name: Total Imported
+            title: Grid Connection
+            state_color: true
+
+      # Historical Production
+      - type: grid
+        title: 📈 Production History
+        cards:
+          - type: statistics-graph
+            title: Power Distribution (24h)
+            chart_type: line
+            period: hour
+            days_to_show: 1
+            entities:
+              - sensor.inverter_total_dc_power
+              - sensor.inverter_load_power
+              - sensor.inverter_meter_power
+            stat_types:
+              - mean
+
+          - type: statistics-graph
+            title: Daily Generation (30 days)
+            chart_type: bar
+            period: day
+            days_to_show: 30
+            entities:
+              - sensor.inverter_daily_power_yield_raw
+            stat_types:
+              - max
+
+      # Inverter Information
+      - type: grid
+        title: 🔧 Inverter Info
+        cards:
+          - type: entities
+            entities:
+              - entity: sensor.inverter_device_type
+                name: Model
+              - entity: sensor.inverter_nominal_active_power
+                name: Rated Power
+              - entity: sensor.inverter_temperature
+                name: Temperature
+              - entity: sensor.inverter_total_running_time
+                name: Total Runtime
+              - entity: sensor.inverter_daily_running_time
+                name: Today Runtime
+            state_color: true
+
+  # ============================================================================
+  # VIEW 4: BATTERY & PRICING
+  # ============================================================================
+  - title: Battery & Pricing
+    path: battery-pricing
+    icon: mdi:battery-charging
+    type: sections
+    sections:
+      # Battery Status
+      - type: grid
+        title: 🔋 Tesla Powerwall
+        cards:
+          - type: gauge
+            entity: sensor.powerwall_percentage_charged
+            name: State of Charge
+            min: 0
+            max: 100
+            needle: true
+            severity:
+              green: 70
+              yellow: 40
+              red: 20
+
+          - type: markdown
+            content: |
+              ## Battery Status
+
+              **Charge Level:** {{ states('sensor.powerwall_percentage_charged') }}%
+
+              {% set charge = states('sensor.powerwall_percentage_charged')|float(0) %}
+              {% if charge >= 95 %}
+              ✅ **Full** - Ready for curtailment
+              {% elif charge >= 70 %}
+              🔋 **High** - Good reserve
+              {% elif charge >= 40 %}
+              ⚡ **Medium** - Normal operation
+              {% elif charge >= 20 %}
+              ⚠️ **Low** - Consider charging
+              {% else %}
+              🔴 **Critical** - Charge needed
+              {% endif %}
+
+              **Integration:** Teslemetry
+
+          # Add more Powerwall sensors if available
+          # Uncomment and add your actual entities:
+          # - type: entities
+          #   entities:
+          #     - entity: sensor.powerwall_battery_now
+          #       name: Current Power
+          #     - entity: sensor.powerwall_load_now
+          #       name: Home Load
+          #     - entity: sensor.powerwall_solar_now
+          #       name: Solar Now
+
+      # Amber Electric Pricing
+      - type: grid
+        title: 💰 Amber Electric Pricing
+        cards:
+          - type: entity
+            entity: sensor.sandhurst_estate_feed_in_price
+            name: Current Feed-in Price
+            card_mod:
+              style: |
+                :host {
+                  {% set price = states('sensor.sandhurst_estate_feed_in_price')|float(0) %}
+                  {% if price <= 0 %}
+                    --card-mod-icon-color: red;
+                  {% elif price > 0.1 %}
+                    --card-mod-icon-color: green;
+                  {% else %}
+                    --card-mod-icon-color: orange;
+                  {% endif %}
+                }
+
+          - type: markdown
+            content: |
+              ## 💵 Current Pricing
+
+              {% set price = states('sensor.sandhurst_estate_feed_in_price')|float(0) %}
+
+              **Feed-in:** ${{ price }}/kWh
+
+              {% if price <= -0.05 %}
+              🚫 **HIGHLY NEGATIVE** - Stop exporting!
+              {% elif price <= 0 %}
+              ⚠️ **NEGATIVE** - Curtail recommended
+              {% elif price <= 0.05 %}
+              📉 **LOW** - Minimal value
+              {% elif price <= 0.15 %}
+              💵 **MODERATE** - Good export value
+              {% else %}
+              💰 **HIGH** - Excellent export value
+              {% endif %}
+
+              **Action:**
+              {% set exporting = states('sensor.inverter_meter_power')|float(0) %}
+              {% set battery = states('sensor.powerwall_percentage_charged')|float(0) %}
+              {% if price <= 0 and battery >= 99 and exporting > 100 %}
+              🛑 Curtailment should activate
+              {% elif price > 0.05 %}
+              ✅ Export is profitable
+              {% else %}
+              ⏸️ Standby
+              {% endif %}
+
+          # Pricing history (if you have historical data)
+          - type: statistics-graph
+            title: Feed-in Price (24h)
+            chart_type: line
+            period: hour
+            days_to_show: 1
+            entities:
+              - sensor.sandhurst_estate_feed_in_price
+            stat_types:
+              - mean
+              - min
+              - max
+
+      # Economic Impact
+      - type: grid
+        title: 💸 Economic Impact
+        cards:
+          - type: markdown
+            content: |
+              ## 📊 Curtailment Impact
+
+              ### Events Prevented
+
+              **This Week:** [Track manually or via automation counter]
+              **This Month:** [Track manually]
+
+              ### Estimated Savings
+
+              {% set negative_events = 3 %}  {# Update this manually or create counter #}
+              {% set avg_duration = 2 %}     {# hours #}
+              {% set avg_export = 2000 %}    {# watts #}
+              {% set avg_negative = -0.05 %} {# $/kWh #}
+              {% set saved = (negative_events * avg_duration * (avg_export / 1000) * avg_negative * -1)|round(2) %}
+
+              **Estimated saved:** ~${{ saved }} this month
+
+              *(Based on {{ negative_events }} curtailment events)*
+
+              ### Without Automation
+              You would have **paid the grid** to take your solar during:
+              - Negative pricing events
+              - When battery was already full
+              - When you couldn't manually intervene
+
+              ### ROI
+              ✅ No hardware cost
+              ✅ Pure software savings
+              ✅ Extends inverter lifespan
+
+  # ============================================================================
+  # VIEW 5: ANALYTICS & HISTORY
+  # ============================================================================
+  - title: Analytics
+    path: analytics
+    icon: mdi:chart-line
+    type: sections
+    sections:
+      # Power Flow Analysis
+      - type: grid
+        title: 📊 Power Flow Analysis
+        cards:
+          - type: statistics-graph
+            title: Solar Production vs Home Load (7 days)
+            chart_type: line
+            period: hour
+            days_to_show: 7
+            entities:
+              - entity: sensor.inverter_total_dc_power
+                name: Solar
+              - entity: sensor.inverter_load_power
+                name: Load
+            stat_types:
+              - mean
+
+          - type: statistics-graph
+            title: Grid Import/Export (7 days)
+            chart_type: line
+            period: hour
+            days_to_show: 7
+            entities:
+              - sensor.inverter_meter_power
+            stat_types:
+              - mean
+
+          - type: statistics-graph
+            title: Battery Level (24h)
+            chart_type: line
+            period: 5minute
+            days_to_show: 1
+            entities:
+              - sensor.powerwall_percentage_charged
+            stat_types:
+              - mean
+
+      # Production Trends
+      - type: grid
+        title: 🌞 Production Trends
+        cards:
+          - type: statistics-graph
+            title: Daily Generation (Last 30 Days)
+            chart_type: bar
+            period: day
+            days_to_show: 30
+            entities:
+              - sensor.inverter_daily_power_yield_raw
+            stat_types:
+              - max
+
+          - type: markdown
+            content: |
+              ## 📈 Monthly Summary
+
+              {% set daily_avg = states('sensor.inverter_daily_power_yield_raw')|float(0) %}
+              {% set monthly_est = (daily_avg * 30)|round(1) %}
+
+              **Today:** {{ daily_avg }} kWh
+              **Monthly Est:** {{ monthly_est }} kWh
+
+              **Top Production Days** (This Month):
+              *(Track via history)*
+
+              **Lowest Production Days**:
+              *(Track via history)*
+
+      # Automation Performance
+      - type: grid
+        title: 🤖 Automation Performance
+        cards:
+          - type: markdown
+            content: |
+              ## Curtailment Events
+
+              To track curtailment events automatically, consider adding:
+              1. Counter helper for shutdown events
+              2. History stats for time in shutdown
+              3. Template sensor for savings calculation
+
+              **Manual Tracking:**
+              - Check automation traces
+              - Review logbook for "Sungrow: Shutdown" events
+              - Monitor feed-in price correlation
+
+          - type: markdown
+            content: |
+              ## 📝 Quick Stats Guide
+
+              **To view automation traces:**
+              1. Settings → Automations & Scenes
+              2. Click "Sungrow: Shutdown when Powerwall full..."
+              3. Click ⋮ → Traces
+
+              **To check history:**
+              1. Developer Tools → States
+              2. Click sensor.inverter_run_mode
+              3. View history graph
+
+              **To calculate savings:**
+              1. Note curtailment start/end times
+              2. Check feed-in price during that period
+              3. Estimate export that would have occurred
+              4. Calculate: savings = hours × kW × negative_price
+
+      # System Health
+      - type: grid
+        title: 🏥 System Health
+        cards:
+          - type: entities
+            entities:
+              - entity: sensor.inverter_work_state
+                name: Inverter Status
+              - entity: sensor.inverter_temperature
+                name: Temperature
+              - entity: sensor.inverter_grid_frequency
+                name: Grid Frequency
+              - entity: sensor.powerwall_percentage_charged
+                name: Battery Health
+            state_color: true
+
+          - type: markdown
+            content: |
+              ## ✅ Health Checklist
+
+              {% set temp = states('sensor.inverter_temperature')|float(0) %}
+              {% set freq = states('sensor.inverter_grid_frequency')|float(50) %}
+
+              **Inverter Temperature:** {{ temp }}°C
+              {% if temp < 70 %}✅ Normal{% elif temp < 85 %}⚠️ Warm{% else %}🔴 Hot{% endif %}
+
+              **Grid Frequency:** {{ freq }} Hz
+              {% if freq >= 49.8 and freq <= 50.2 %}✅ Normal{% else %}⚠️ Outside range{% endif %}
+
+              **Automation Status:**
+              - Modbus: {% if states('sensor.inverter_total_dc_power') != 'unavailable' %}✅{% else %}❌{% endif %}
+              - Teslemetry: {% if states('sensor.powerwall_percentage_charged') != 'unavailable' %}✅{% else %}❌{% endif %}
+              - Amber: {% if states('sensor.sandhurst_estate_feed_in_price') != 'unavailable' %}✅{% else %}❌{% endif %}
+
+  # ============================================================================
+  # VIEW 6: SYSTEM INFO & HELP
+  # ============================================================================
+  - title: System Info
+    path: info
+    icon: mdi:information
+    type: sections
+    sections:
+      - type: grid
+        title: ℹ️ System Information
+        cards:
+          - type: markdown
+            content: |
+              ## 🏠 System Configuration
+
+              ### Hardware
+              - **Inverter:** Sungrow SG5.0RS
+              - **Connection:** WiNet-S Dongle (Modbus TCP)
+              - **Battery:** Tesla Powerwall 2
+              - **Location:** Australia
+
+              ### Integrations
+              - **Modbus:** Built-in HA integration
+              - **Battery:** Teslemetry
+              - **Pricing:** Amber Electric
+              - **Dashboard:** Custom YAML
+
+              ### Features
+              ✅ Real-time power monitoring
+              ✅ Price-aware curtailment
+              ✅ Battery management
+              ✅ Manual override controls
+              ✅ Historical analytics
+              ✅ Safety features
+
+          - type: markdown
+            content: |
+              ## 📚 Documentation
+
+              **GitHub Repository:**
+              [Artic0din/sungrow-sg5-price-curtailment](https://github.com/Artic0din/sungrow-sg5-price-curtailment)
+
+              **Guides:**
+              - Installation Guide
+              - Integration Setup
+              - Modbus Register Reference
+              - Troubleshooting Guide
+
+              **Support:**
+              - GitHub Issues
+              - GitHub Discussions
+              - Home Assistant Community
+
+          - type: markdown
+            content: |
+              ## 🆘 Quick Troubleshooting
+
+              **Inverter not responding:**
+              1. Check IP address hasn't changed
+              2. Test modbus write in Developer Tools
+              3. Verify WiNet-S is powered on
+
+              **Automation not triggering:**
+              1. Check all sensors are available
+              2. Verify thresholds are set correctly
+              3. Check automation traces
+
+              **Sensors unavailable:**
+              1. Check integration status
+              2. Restart integration if needed
+              3. Verify network connectivity
+
+              **Need help?**
+              Open an issue on GitHub with:
+              - Home Assistant version
+              - Error logs
+              - Steps to reproduce
+
+          - type: entities
+            entities:
+              - entity: sensor.inverter_device_type
+              - entity: sensor.inverter_nominal_active_power
+              - entity: sensor.inverter_total_running_time
+            title: Inverter Details
