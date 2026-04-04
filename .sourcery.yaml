@@ -1,0 +1,10 @@
+refactor:
+  skip: []
+rules: []
+github:
+  labels: true
+  request_review: author
+  sourcery_branch: sourcery/{base_branch}
+clone_detection:
+  min_lines: 4
+  min_duplicates: 2
