@@ -1,10 +1,14 @@
 refactor:
   skip: []
-rules: []
 github:
   labels: true
   request_review: author
   sourcery_branch: sourcery/{base_branch}
+  review_comment: true
+  inline_comments: true
 clone_detection:
-  min_lines: 4
+  min_lines: 3
   min_duplicates: 2
+metrics:
+  quality_threshold: 25.0
+rules: []
