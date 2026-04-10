@@ -1,0 +1,137 @@
+name: CodeRabbit Nitpicks to Issues
+
+on:
+  pull_request_review:
+    types: [submitted]
+
+jobs:
+  log-nitpicks:
+    name: Log nitpicks as issues
+    if: >-
+      github.event.review.user.login == 'coderabbitai' ||
+      github.event.review.user.login == 'coderabbit[bot]' ||
+      github.event.review.user.login == 'coderabbitai[bot]'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      pull-requests: read
+
+    steps:
+      - name: Fetch review comments and create issues for nitpicks
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prNumber = context.payload.pull_request.number;
+            const prTitle = context.payload.pull_request.title;
+            const reviewId = context.payload.review.id;
+
+            // Get all comments from this review
+            const comments = await github.paginate(
+              github.rest.pulls.listReviewComments,
+              {
+                ...context.repo,
+                pull_number: prNumber,
+              }
+            );
+
+            // Filter to comments from this specific review
+            const reviewComments = comments.filter(
+              c => c.pull_request_review_id === reviewId
+            );
+
+            // CodeRabbit formats severity as: _Type_ | _Severity_
+            // e.g. "_Nitpick (non-blocking)_ | _Minor_"
+            const severityPattern = /_([^_]+)_\s*\|\s*_([^_]+)_/;
+
+            const nitpicks = reviewComments.filter(c => {
+              const match = c.body.match(severityPattern);
+              if (match) {
+                const type = match[1].toLowerCase();
+                return type.includes('nitpick') || type.includes('suggestion');
+              }
+              return c.body.toLowerCase().includes('nitpick');
+            });
+
+            console.log(`Found ${nitpicks.length} nitpick/suggestion comment(s) out of ${reviewComments.length} total`);
+
+            for (const comment of nitpicks) {
+              // Extract title from bold summary line or first meaningful line
+              const lines = comment.body.split('\n').filter(l => l.trim());
+              const boldLine = lines.find(l => /^\*\*[^*]+\*\*/.test(l.trim()));
+
+              let title = '';
+              if (boldLine) {
+                title = boldLine.replace(/\*\*/g, '').trim();
+              } else {
+                title = lines.find(l =>
+                  !l.startsWith('>') &&
+                  !l.startsWith('<!--') &&
+                  !l.match(severityPattern) &&
+                  !l.startsWith('<details') &&
+                  l.trim().length > 10
+                ) || lines[0] || 'CodeRabbit nitpick';
+              }
+
+              // Clean markdown for title
+              title = title
+                .replace(/[*_`#]/g, '')
+                .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+                .trim()
+                .slice(0, 100);
+
+              // Extract severity for priority mapping
+              const match = comment.body.match(severityPattern);
+              const severity = match ? match[2].toLowerCase().trim() : 'minor';
+
+              // Extract the suggestion/description from the comment body
+              // Strip the severity header and agent prompt sections
+              const descriptionLines = comment.body.split('\n');
+              const cleanDescription = descriptionLines
+                .filter(l =>
+                  !l.match(severityPattern) &&
+                  !l.includes('<details>') &&
+                  !l.includes('</details>') &&
+                  !l.includes('<summary>') &&
+                  !l.includes('</summary>') &&
+                  !l.includes('Prompt for AI Agents')
+                )
+                .join('\n')
+                .trim();
+
+              const body = [
+                '## Description',
+                `${cleanDescription}`,
+                '',
+                `> From CodeRabbit review on PR #${prNumber} — [view comment](${comment.html_url})`,
+                '',
+                '## Priority',
+                severity === 'minor' ? 'Low' : 'Quick win',
+                '',
+                '## Task Breakdown',
+                `- [ ] Address nitpick in \`${comment.path}\`${comment.line ? ` at line ${comment.line}` : ''}`,
+                '',
+                '## Acceptance Criteria',
+                `- [ ] Change applied in \`${comment.path}\``,
+                '- [ ] No regressions introduced',
+                '',
+                '## Affected Files',
+                `- \`${comment.path}\``,
+              ].join('\n');
+
+              await github.rest.issues.create({
+                ...context.repo,
+                title: title,
+                body,
+                labels: ['nitpick'],
+              });
+
+              console.log(`Created issue: ${title} (${comment.path})`);
+            }
+
+            if (nitpicks.length > 0) {
+              await github.rest.issues.createComment({
+                ...context.repo,
+                issue_number: prNumber,
+                body: `📝 **${nitpicks.length} nitpick(s)** logged as GitHub issues for backlog tracking.`,
+              });
+            }
