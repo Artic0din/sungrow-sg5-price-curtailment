@@ -39,8 +39,9 @@ jobs:
               c => c.pull_request_review_id === reviewId
             );
 
-            // CodeRabbit formats severity as: _Type_ | _Severity_
-            // e.g. "_Nitpick (non-blocking)_ | _Minor_"
+            // CodeRabbit formats as: _Type_ | _Severity_
+            // Types: "⚠️ Potential issue", "🧹 Nitpick"
+            // Severities: "🔴 Critical", "🟠 Major", "🟡 Minor", "🔵 Trivial"
             const severityPattern = /_([^_]+)_\s*\|\s*_([^_]+)_/;
 
             const nitpicks = reviewComments.filter(c => {
