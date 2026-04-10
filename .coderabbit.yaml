@@ -1,0 +1,15 @@
+# CodeRabbit configuration
+# Docs: https://docs.coderabbit.ai/guides/configuration
+
+reviews:
+  # When CodeRabbit posts actionable (non-nitpick) comments,
+  # submit the review as "Changes Requested" which fails the check
+  request_changes_workflow: true
+
+  # Review profile
+  profile: chill
+
+  # Auto-review on new PRs and incremental pushes
+  auto_review:
+    enabled: true
+    drafts: false
