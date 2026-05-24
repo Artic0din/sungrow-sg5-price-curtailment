@@ -1,3 +1,13 @@
+<p align="center">
+  <img src="assets/logo-wordmark.png" alt="sungrow-sg5-price-curtailment" width="640">
+</p>
+
+<p align="center">
+  <em>Auto-curtail Sungrow inverters when wholesale prices go negative</em>
+</p>
+
+---
+
 # Sungrow SG5.0RS Price-Aware Solar Curtailment for Home Assistant
 
 Automatically curtail solar production when your battery is full and feed-in prices are zero or negative, preventing you from paying to export electricity to the grid.

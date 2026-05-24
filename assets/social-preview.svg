@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 640" width="1280" height="640">
+  <defs>
+    <linearGradient id="gs" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0c2461"/>
+      <stop offset="1" stop-color="#0c2461" stop-opacity="0.95"/>
+    </linearGradient>
+    <linearGradient id="ga" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f59e0b"/>
+      <stop offset="1" stop-color="#f59e0b" stop-opacity="0.65"/>
+    </linearGradient>
+  </defs>
+  <rect width="1280" height="640" fill="url(#gs)"/>
+  <!-- subtle diagonal accent stripe -->
+  <polygon points="0,640 0,520 1280,140 1280,260" fill="#f59e0b" fill-opacity="0.08"/>
+  <!-- monogram square -->
+  <rect x="90" y="190" width="260" height="260" rx="56" fill="url(#ga)"/>
+  <text x="220" y="320" text-anchor="middle" dominant-baseline="central"
+        font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-weight="900"
+        font-size="160" fill="#fffbeb" letter-spacing="-3">SG5</text>
+  <!-- project name -->
+  <text x="410" y="295" dominant-baseline="central"
+        font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-weight="900"
+        font-size="74" fill="#fffbeb" letter-spacing="-3">sungrow-sg5-price-curtailment</text>
+  <!-- tagline -->
+  <text x="410" y="365" dominant-baseline="central"
+        font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-weight="500"
+        font-size="28" fill="#f59e0b" opacity="0.95">Auto-curtail Sungrow inverters when wholesale prices go negative</text>
+  <!-- attribution -->
+  <text x="1190" y="600" text-anchor="end" dominant-baseline="central"
+        font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-weight="600"
+        font-size="18" fill="#fffbeb" opacity="0.55">github.com/Artic0din</text>
+</svg>
