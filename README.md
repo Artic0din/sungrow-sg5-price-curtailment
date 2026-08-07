@@ -1,9 +1,5 @@
 <p align="center">
-  <img src="assets/logo-wordmark.png" alt="sungrow-sg5-price-curtailment" width="640">
-</p>
-
-<p align="center">
-  <em>Auto-curtail Sungrow inverters when wholesale prices go negative</em>
+  <img src="assets/logo-wordmark.svg" alt="sungrow-sg5-price-curtailment - Auto-curtail Sungrow inverters when wholesale prices go negative" width="640">
 </p>
 
 ---
