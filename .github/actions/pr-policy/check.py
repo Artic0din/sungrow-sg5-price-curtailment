@@ -50,7 +50,7 @@ VALIDATION_HEADINGS = {
     "verification",
 }
 MARKDOWN_HEADING = re.compile(
-    r"^ {0,3}(?P<marks>#{1,6})[ \t]+(?P<title>.*?)(?:[ \t]+#+)?[ \t]*$"
+    r"^ {0,3}(?P<marks>#{1,6})(?:[ \t]+(?P<title>.*?)(?:[ \t]+#+)?[ \t]*|[ \t]*)$"
 )
 MARKDOWN_SETEXT_UNDERLINE = re.compile(r"^ {0,3}(?P<marks>=+|-+)[ \t]*$")
 FENCE_MARKER = re.compile(
@@ -65,7 +65,17 @@ NEGATIVE_VALIDATION = re.compile(
     r"\bno\s+tests?\s+(?:were\s+)?(?:run|required|needed)\b|"
     r"\bthere\s+(?:are|were)\s+no\s+tests?\b|"
     r"\btests?\s+(?:(?:was|were)\s+)?skipped\b|"
-    r"\bdid\s+not\s+run\s+tests?\b"
+    r"\bdid\s+not\s+run\s+tests?\b|"
+    r"\b(?:failed|failing)\b|"
+    r"\bexit(?:ed)?\s+with\s+(?:code\s+)?[1-9]\d*\b|"
+    r"\bnon[- ]?zero\b|"
+    r"\b(?:pending|todo)\b"
+)
+HARD_FAILURE_VALIDATION = re.compile(
+    r"(?i)\b(?:failed|failing)\b|"
+    r"\bexit(?:ed)?\s+with\s+(?:code\s+)?[1-9]\d*\b|"
+    r"\bnon[- ]?zero\b|"
+    r"\b(?:pending|todo)\b"
 )
 VALIDATION_SCAFFOLD = re.compile(
     r"(?i)^(?:(?:results?|commands?|evidence|checks?|tests?|validation|verification):|"
@@ -79,6 +89,7 @@ HTML_COMMENT = re.compile(r"<!--.*?(?:-->|$)", re.DOTALL)
 THEMATIC_BREAK = re.compile(
     r"^(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$"
 )
+PRESENTATION_MARKUP = re.compile(r"(?<!\\)[*_~]+")
 GRAPHITE_QUEUE_BRANCH = re.compile(r"^gtmq_[A-Za-z0-9_-]+$")
 GRAPHITE_QUEUE_TITLE_PREFIX = "[Graphite MQ] Draft PR GROUP:"
 GRAPHITE_QUEUE_AUTHOR = "graphite-app[bot]"
@@ -93,7 +104,7 @@ def validate_pull_request(
     failures: list[str] = []
     title = str(pull_request.get("title") or "")
     body = HTML_COMMENT.sub("", str(pull_request.get("body") or ""))
-    linkable_body = strip_inline_code(strip_fenced_code(body))
+    linkable_body = strip_inline_code(strip_indented_code(strip_fenced_code(body)))
     branch = str(pull_request.get("head", {}).get("ref") or "")
     if pull_request.get("draft"):
         failures.append("pull request must be ready for review, not draft")
@@ -247,7 +258,8 @@ def markdown_heading(lines: list[str], index: int) -> tuple[int, str, int] | Non
     """Parse an ATX or Setext heading outside fenced code."""
     line = lines[index]
     if atx := MARKDOWN_HEADING.fullmatch(line):
-        return len(atx.group("marks")), atx.group("title").strip().casefold(), 1
+        title = (atx.group("title") or "").strip().casefold()
+        return len(atx.group("marks")), title, 1
     if index + 1 >= len(lines) or not line.strip():
         return None
     if setext := MARKDOWN_SETEXT_UNDERLINE.fullmatch(lines[index + 1]):
@@ -275,6 +287,17 @@ def strip_fenced_code(body: str) -> str:
 
         visible.append(line)
 
+    return "".join(visible)
+
+
+def strip_indented_code(body: str) -> str:
+    """Remove conservatively detected indented code from closing-link input."""
+    visible: list[str] = []
+    for line in body.splitlines(keepends=True):
+        if line.startswith("    ") or line.startswith("\t"):
+            visible.append("\uFFFC\n" if line.endswith(("\n", "\r")) else "\uFFFC")
+        else:
+            visible.append(line)
     return "".join(visible)
 
 
@@ -362,7 +385,12 @@ def is_graphite_queue_pull_request(pull_request: dict[str, Any]) -> bool:
 
 
 def meaningful_validation(content: str) -> bool:
+    normalized_content = PRESENTATION_MARKUP.sub("", content)
+    if HARD_FAILURE_VALIDATION.search(normalized_content):
+        return False
     for line in content.splitlines():
+        if re.fullmatch(r"(?:[-+*]|\d+[.)])", line.strip()):
+            continue
         stripped = re.sub(
             r"^(?:[-+*]|\d+[.)])\s+", "", line.strip()
         ).strip()
@@ -375,6 +403,7 @@ def meaningful_validation(content: str) -> bool:
         if re.match(r"^\[\s\]", stripped):
             continue
         stripped = re.sub(r"^\[[ xX]\]\s*", "", stripped)
+        stripped = PRESENTATION_MARKUP.sub("", stripped).strip()
         for clause in stripped.split(";"):
             if clause_has_validation_evidence(clause):
                 return True
