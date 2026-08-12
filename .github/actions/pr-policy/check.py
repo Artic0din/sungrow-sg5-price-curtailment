@@ -30,7 +30,7 @@ CONVENTIONAL_TYPES = (
 CONVENTIONAL_TYPE_PATTERN = "|".join(map(re.escape, CONVENTIONAL_TYPES))
 CONVENTIONAL_TITLE = re.compile(
     rf"^(?:{CONVENTIONAL_TYPE_PATTERN})"
-    r"(?:\([a-z0-9][a-z0-9._/-]*\))?!?: .+"
+    r"(?:\([a-z0-9][a-z0-9._/-]*\))?!?: \S(?:.*\S)?"
 )
 ISSUE_BRANCH = re.compile(
     rf"^(?:{CONVENTIONAL_TYPE_PATTERN}|cursor|issue)/(\d+)(?:-|$)",

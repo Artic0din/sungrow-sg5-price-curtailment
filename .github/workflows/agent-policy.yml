@@ -6,18 +6,49 @@ on:
 
 permissions:
   contents: read
-  issues: read
-  pull-requests: read
+
+concurrency:
+  group: agent-policy-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 jobs:
   validate:
-    name: Validate agent delivery policy
+    name: Evaluate agent delivery policy
     runs-on: ubuntu-latest
+    permissions:
+      checks: write # Publish the trusted result against the pull-request head SHA.
+      contents: read # Load the policy implementation from the default branch.
+      issues: read # Verify issue-backed pull requests.
+      pull-requests: read # Read pull-request metadata.
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
-      - uses: ./.github/actions/pr-policy
+      - id: policy
+        uses: ./.github/actions/pr-policy
         with:
           github-token: ${{ github.token }}
+      - name: Publish result against pull-request head
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          RESULT: ${{ steps.policy.outputs.validation-result }}
+        run: |
+          if [[ "$RESULT" == "success" ]]; then
+            conclusion=success
+            summary="Pull-request metadata satisfies the agent delivery policy."
+          else
+            conclusion=failure
+            summary="Pull-request metadata violates the agent delivery policy. See the evaluation log for details."
+          fi
+          gh api --method POST "repos/$GITHUB_REPOSITORY/check-runs" \
+            -f name="Validate agent delivery policy" \
+            -f head_sha="$HEAD_SHA" \
+            -f status=completed \
+            -f conclusion="$conclusion" \
+            -f "output[title]=Agent delivery policy" \
+            -f "output[summary]=$summary"
+      - name: Fail when policy validation fails
+        if: steps.policy.outputs.validation-result != 'success'
+        run: exit 1

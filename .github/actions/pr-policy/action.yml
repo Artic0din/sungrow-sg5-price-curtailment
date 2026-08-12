@@ -3,14 +3,29 @@ description: Validate host-neutral pull-request metadata for any coding agent
 
 inputs:
   github-token:
-    description: Read-only token used to verify issue-backed pull requests
+    description: Token used to verify issue-backed pull requests
     required: true
+
+outputs:
+  validation-result:
+    description: Whether the pull-request metadata passed validation
+    value: ${{ steps.validate.outputs.result }}
 
 runs:
   using: composite
   steps:
     - name: Validate pull-request metadata
+      id: validate
       shell: bash
       env:
         AGENT_POLICY_GITHUB_TOKEN: ${{ inputs.github-token }}
-      run: python3 "$GITHUB_ACTION_PATH/check.py" --event "$GITHUB_EVENT_PATH"
+      run: |
+        set +e
+        python3 "$GITHUB_ACTION_PATH/check.py" --event "$GITHUB_EVENT_PATH"
+        validation_exit=$?
+        set -e
+        if [[ "$validation_exit" -eq 0 ]]; then
+          echo "result=success" >> "$GITHUB_OUTPUT"
+        else
+          echo "result=failure" >> "$GITHUB_OUTPUT"
+        fi
