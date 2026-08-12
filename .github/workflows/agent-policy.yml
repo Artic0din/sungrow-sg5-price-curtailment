@@ -1,0 +1,56 @@
+name: Agent delivery policy
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize, ready_for_review]
+
+permissions:
+  contents: read
+  issues: read
+  pull-requests: read
+
+jobs:
+  validate:
+    name: Validate agent delivery policy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+      - name: Locate trusted policy action
+        id: policy-action
+        shell: bash
+        run: |
+          if [[ -f .github/actions/pr-policy/action.yml && -f .github/actions/pr-policy/check.py ]]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Check out policy candidate for first rollout
+        if: steps.policy-action.outputs.present != 'true'
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: .policy-candidate
+          sparse-checkout: .github/actions/pr-policy
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - name: Bootstrap hash-verified policy action
+        if: steps.policy-action.outputs.present != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          candidate=.policy-candidate/.github/actions/pr-policy
+          (
+            cd "$candidate"
+            printf '%s  %s\n' \
+              '37ca0e917f6a8451408abd0b134e68da8b877f49e2ae6647fd54ba0a67e16c8e' action.yml \
+              'e5eacd2f1f4c3982e55fa3171194ac465275b111cb27d7134d8568b83a170615' check.py \
+              | sha256sum --check -
+          )
+          mkdir -p .github/actions/pr-policy
+          cp "$candidate/action.yml" "$candidate/check.py" .github/actions/pr-policy/
+      - uses: ./.github/actions/pr-policy
+        with:
+          github-token: ${{ github.token }}

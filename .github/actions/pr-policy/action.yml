@@ -1,0 +1,16 @@
+name: Validate agent delivery policy
+description: Validate host-neutral pull-request metadata for any coding agent
+
+inputs:
+  github-token:
+    description: Read-only token used to verify issue-backed pull requests
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Validate pull-request metadata
+      shell: bash
+      env:
+        AGENT_POLICY_GITHUB_TOKEN: ${{ inputs.github-token }}
+      run: python3 "$GITHUB_ACTION_PATH/check.py" --event "$GITHUB_EVENT_PATH"

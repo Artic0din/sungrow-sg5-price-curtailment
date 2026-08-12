@@ -6,5 +6,6 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 ## [Unreleased]
 
 ### Added
+- A host-neutral agent delivery workflow now validates pull-request metadata.
 - CI now validates every Home Assistant YAML file and protects the inverter register, curtailment, restart, and sunset safety contracts with automated tests.
 - Wiki auto-update workflow on PR merge
