@@ -5,6 +5,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/)
 
 ## [Unreleased]
 
+### Changed
+- Issue-backed agent branches now put the issue number first so repository policy can verify the linked issue.
+
 ### Added
 - A host-neutral agent delivery workflow now validates pull-request metadata.
 - CI now validates every Home Assistant YAML file and protects the inverter register, curtailment, restart, and sunset safety contracts with automated tests.

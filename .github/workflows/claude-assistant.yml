@@ -88,7 +88,7 @@ jobs:
             BRANCH RULES:
             - Never commit directly to main
             - Always create a feature branch for any code changes
-            - Branch naming: {type}/{description}-{issue-number}
+            - Branch naming: {type}/{issue-number}-{description}
 
             CODE STANDARDS by stack:
             - Next.js/TypeScript: no any, strict types, App Router patterns, Prisma additive migrations only

@@ -37,14 +37,26 @@ ISSUE_BRANCH = re.compile(
     re.IGNORECASE,
 )
 ISSUE_LINK = re.compile(r"(?i)\b(?:fixes|closes|resolves)\s+#(\d+)\b")
-VALIDATION_SECTION = re.compile(
-    r"(?ims)^#{1,3}\s+(?:test plan|test(?:ing|s)?|validation|verification)\s*$"
-    r"(?P<content>.*?)(?=^#{1,3}\s+|\Z)"
+VALIDATION_HEADINGS = {
+    "test",
+    "test plan",
+    "testing",
+    "tests",
+    "validation",
+    "verification",
+}
+MARKDOWN_HEADING = re.compile(
+    r"^(?P<marks>#{1,6})\s+(?P<title>.*?)(?:\s+#+)?\s*$"
 )
+FENCE_MARKER = re.compile(r"^\s*(?P<fence>`{3,}|~{3,})")
 NEGATIVE_VALIDATION = re.compile(
     r"(?i)(?:^|:\s*)(?:n/?a|none|not applicable|not required|not run|"
     r"not tested|pending|skipped|todo)(?:\b|[.!])|"
-    r"\btests?\s+(?:were\s+|was\s+)?not\s+(?:run|tested)\b"
+    r"\btests?\s+(?:were\s+|was\s+)?not\s+(?:run|tested)\b|"
+    r"\bno\s+tests?\s+(?:were\s+)?(?:run|required|needed)\b|"
+    r"\bthere\s+(?:are|were)\s+no\s+tests?\b|"
+    r"\btests?\s+skipped\b|"
+    r"\bdid\s+not\s+run\s+tests?\b"
 )
 VALIDATION_SCAFFOLD = re.compile(
     r"(?i)^(?:results?|commands?|evidence|checks?|tests?|validation|verification):$"
@@ -53,6 +65,7 @@ HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
 FENCED_CODE = re.compile(
     r"(?ms)^[ \t]*(?P<fence>`{3,}|~{3,})[^\n]*\n.*?^[ \t]*(?P=fence)[ \t]*$"
 )
+INLINE_CODE = re.compile(r"(?s)(?P<ticks>`+).*?(?P=ticks)")
 GRAPHITE_QUEUE_BRANCH = re.compile(r"^gtmq_[A-Za-z0-9_-]+$")
 GRAPHITE_QUEUE_TITLE_PREFIX = "[Graphite MQ] Draft PR GROUP:"
 GRAPHITE_QUEUE_AUTHOR = "graphite-app[bot]"
@@ -67,7 +80,7 @@ def validate_pull_request(
     failures: list[str] = []
     title = str(pull_request.get("title") or "")
     body = HTML_COMMENT.sub("", str(pull_request.get("body") or ""))
-    linkable_body = FENCED_CODE.sub("", body)
+    linkable_body = INLINE_CODE.sub("", FENCED_CODE.sub("", body))
     branch = str(pull_request.get("head", {}).get("ref") or "")
     if pull_request.get("draft"):
         failures.append("pull request must be ready for review, not draft")
@@ -75,23 +88,29 @@ def validate_pull_request(
         failures.append("pull-request title is not conventional")
     if not body.strip():
         failures.append("pull-request body is empty")
-    elif not (validation_matches := list(VALIDATION_SECTION.finditer(body))):
+    elif not (sections := validation_sections(body)):
         failures.append("pull-request body lacks a test or validation section")
-    elif not any(
-        meaningful_validation(match.group("content")) for match in validation_matches
-    ):
+    elif not any(meaningful_validation(section) for section in sections):
         failures.append("pull-request validation section has no verification evidence")
     issue_match = ISSUE_BRANCH.search(branch)
     if issue_match:
         issue_number = issue_match.group(1)
+        base = pull_request.get("base", {})
+        base_ref = str(base.get("ref") or "")
+        default_branch = str(base.get("repo", {}).get("default_branch") or "")
+        if not default_branch or base_ref != default_branch:
+            expected = default_branch or "the repository default"
+            failures.append(
+                f"issue-backed pull request must target default branch {expected}"
+            )
         linked = {match.group(1) for match in ISSUE_LINK.finditer(linkable_body)}
         if linked != {issue_number}:
             failures.append(
                 f"issue-backed pull request must close only issue #{issue_number}"
             )
         elif issue_lookup is not None:
-            issue_is_open, issue_failure = issue_lookup(int(issue_number))
-            if not issue_is_open:
+            issue_is_valid, issue_failure = issue_lookup(int(issue_number))
+            if not issue_is_valid:
                 failures.append(issue_failure)
     return failures
 
@@ -125,7 +144,52 @@ def github_issue_lookup(issue_number: int) -> tuple[bool, str]:
         return False, f"unable to verify linked issue #{issue_number}: {error}"
     if issue.get("pull_request") is not None:
         return False, f"linked item #{issue_number} is a pull request, not an issue"
+    if issue.get("state") != "open":
+        return False, f"linked issue #{issue_number} is closed"
     return True, ""
+
+
+def validation_sections(body: str) -> list[str]:
+    sections: list[str] = []
+    current: list[str] | None = None
+    section_level = 0
+    fence = ""
+
+    for line in body.splitlines():
+        stripped = line.lstrip()
+        if fence:
+            if re.fullmatch(rf"{re.escape(fence[0])}{{{len(fence)},}}\s*", stripped):
+                fence = ""
+            if current is not None:
+                current.append(line)
+            continue
+
+        if fence_match := FENCE_MARKER.match(line):
+            fence = fence_match.group("fence")
+            if current is not None:
+                current.append(line)
+            continue
+
+        heading = MARKDOWN_HEADING.match(line)
+        if heading:
+            level = len(heading.group("marks"))
+            title = heading.group("title").strip().casefold()
+            if current is not None and level <= section_level:
+                sections.append("\n".join(current))
+                current = None
+            if current is None and title in VALIDATION_HEADINGS:
+                current = []
+                section_level = level
+            elif current is not None:
+                current.append(line)
+            continue
+
+        if current is not None:
+            current.append(line)
+
+    if current is not None:
+        sections.append("\n".join(current))
+    return sections
 
 
 def is_graphite_queue_pull_request(pull_request: dict[str, Any]) -> bool:
@@ -144,6 +208,8 @@ def is_graphite_queue_pull_request(pull_request: dict[str, Any]) -> bool:
 def meaningful_validation(content: str) -> bool:
     for line in content.splitlines():
         stripped = line.strip().lstrip("-* ").strip()
+        if MARKDOWN_HEADING.fullmatch(stripped):
+            continue
         if re.fullmatch(
             r"`{3,}(?:[A-Za-z0-9_+-]+)?|~{3,}(?:[A-Za-z0-9_+-]+)?", stripped
         ):
@@ -155,7 +221,7 @@ def meaningful_validation(content: str) -> bool:
             clause = clause.strip()
             if not clause:
                 continue
-            if ISSUE_LINK.fullmatch(clause):
+            if ISSUE_LINK.fullmatch(clause.rstrip(".,;:!?")):
                 continue
             if VALIDATION_SCAFFOLD.fullmatch(clause):
                 continue
