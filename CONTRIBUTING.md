@@ -110,8 +110,10 @@ cd sungrow-sg5-price-curtailment
 
 ### 2. Create Feature Branch
 
+For issue-backed work, include the issue number in the branch name:
+
 ```bash
-git checkout -b feature/your-feature-name
+git checkout -b feat/123-your-feature-name
 ```
 
 ### 3. Make Changes

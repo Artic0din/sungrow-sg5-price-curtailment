@@ -381,10 +381,10 @@ See [docs/MODBUS_REGISTERS.md](docs/MODBUS_REGISTERS.md) for complete register m
 Contributions welcome! Please:
 
 1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+2. Create an issue-backed feature branch (`git checkout -b feat/123-amazing-feature`)
 3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+4. Push to the branch (`git push origin feat/123-amazing-feature`)
+5. Open a Pull Request whose body includes `Fixes #123`
 
 ## 📄 License
 
