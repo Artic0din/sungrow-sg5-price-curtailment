@@ -37,7 +37,7 @@ ISSUE_BRANCH = re.compile(
     re.IGNORECASE,
 )
 ISSUE_LINK = re.compile(
-    r"(?i)\b(?P<keyword>close(?:s|d)?|fix(?:es|ed)?|resolve(?:s|d)?):?[ \t]+"
+    r"(?i)\b(?P<keyword>close(?:s|d)?|fix(?:es|ed)?|resolve(?:s|d)?)(?P<colon>:?)[ \t]+"
     r"(?:(?P<repository>[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+))?"
     r"#(?P<number>\d+)\b"
 )
@@ -103,8 +103,11 @@ def validate_pull_request(
         return []
     failures: list[str] = []
     title = str(pull_request.get("title") or "")
-    body = HTML_COMMENT.sub("", str(pull_request.get("body") or ""))
-    linkable_body = strip_inline_code(strip_indented_code(strip_fenced_code(body)))
+    raw_body = str(pull_request.get("body") or "")
+    body = HTML_COMMENT.sub("", protect_comment_openers_in_code(raw_body))
+    linkable_body = strip_indented_code(
+        strip_fenced_code(mask_inline_code_outside_fences(body))
+    )
     branch = str(pull_request.get("head", {}).get("ref") or "")
     if pull_request.get("draft"):
         failures.append("pull request must be ready for review, not draft")
@@ -112,14 +115,16 @@ def validate_pull_request(
         failures.append("pull-request title is not conventional")
     if not body.strip():
         failures.append("pull-request body is empty")
-    elif not (sections := validation_sections(body)):
+    elif not (sections := validation_sections(mask_inline_code_outside_fences(body))):
         failures.append("pull-request body lacks a test or validation section")
     elif not any(meaningful_validation(section) for section in sections):
         failures.append("pull-request validation section has no verification evidence")
     issue_match = ISSUE_BRANCH.search(branch)
     issue_links = list(ISSUE_LINK.finditer(linkable_body))
     non_fixes_links = [
-        match for match in issue_links if match.group("keyword").casefold() != "fixes"
+        match
+        for match in issue_links
+        if match.group("keyword").casefold() != "fixes" or match.group("colon")
     ]
     linked = {
         match.group("number")
@@ -262,6 +267,8 @@ def markdown_heading(lines: list[str], index: int) -> tuple[int, str, int] | Non
         return len(atx.group("marks")), title, 1
     if index + 1 >= len(lines) or not line.strip():
         return None
+    if line.startswith("    ") or line.startswith("\t"):
+        return None
     if setext := MARKDOWN_SETEXT_UNDERLINE.fullmatch(lines[index + 1]):
         level = 1 if setext.group("marks").startswith("=") else 2
         return level, line.strip().casefold(), 2
@@ -324,6 +331,63 @@ def is_closing_fence(line: str, opening: str) -> bool:
 
 def strip_inline_code(text: str) -> str:
     """Remove well-formed Markdown code spans in linear time."""
+    visible: list[str] = []
+    cursor = 0
+    for start, end in inline_code_ranges(text):
+        visible.append(text[cursor:start])
+        visible.append("\uFFFC")
+        cursor = end
+    visible.append(text[cursor:])
+    return "".join(visible)
+
+
+def mask_inline_code_outside_fences(text: str) -> str:
+    """Mask code spans while preserving fenced blocks and line boundaries."""
+    fenced_ranges = fenced_code_ranges(text)
+    visible: list[str] = []
+    cursor = 0
+    fenced_index = 0
+    for start, end in inline_code_ranges(text):
+        while (
+            fenced_index < len(fenced_ranges)
+            and fenced_ranges[fenced_index][1] <= start
+        ):
+            fenced_index += 1
+        if (
+            fenced_index < len(fenced_ranges)
+            and fenced_ranges[fenced_index][0] <= start < fenced_ranges[fenced_index][1]
+        ):
+            continue
+        visible.append(text[cursor:start])
+        visible.append(re.sub(r"[^\r\n]+", "\uFFFC", text[start:end]))
+        cursor = end
+    visible.append(text[cursor:])
+    return "".join(visible)
+
+
+def fenced_code_ranges(text: str) -> list[tuple[int, int]]:
+    """Return top-level fenced-code ranges, including unclosed fences."""
+    ranges: list[tuple[int, int]] = []
+    fence = ""
+    start = 0
+    offset = 0
+    for line in text.splitlines(keepends=True):
+        content = line.rstrip("\r\n")
+        if fence:
+            if is_closing_fence(content, fence):
+                ranges.append((start, offset + len(line)))
+                fence = ""
+        elif opening := opening_fence(content):
+            fence = opening
+            start = offset
+        offset += len(line)
+    if fence:
+        ranges.append((start, len(text)))
+    return ranges
+
+
+def inline_code_ranges(text: str) -> list[tuple[int, int]]:
+    """Return well-formed Markdown code-span ranges in linear time."""
     runs: list[tuple[int, int, int, bool]] = []
     index = 0
     while index < len(text):
@@ -343,8 +407,7 @@ def strip_inline_code(text: str) -> str:
         next_same_length[run_index] = latest_by_length.get(length)
         latest_by_length[length] = run_index
 
-    visible: list[str] = []
-    cursor = 0
+    ranges: list[tuple[int, int]] = []
     run_index = 0
     while run_index < len(runs):
         if runs[run_index][3]:
@@ -354,12 +417,37 @@ def strip_inline_code(text: str) -> str:
         if closer_index is None:
             run_index += 1
             continue
-        visible.append(text[cursor : runs[run_index][0]])
-        visible.append("\uFFFC")
-        cursor = runs[closer_index][1]
+        ranges.append((runs[run_index][0], runs[closer_index][1]))
         run_index = closer_index + 1
-    visible.append(text[cursor:])
-    return "".join(visible)
+    return ranges
+
+
+def protect_comment_openers_in_code(text: str) -> str:
+    """Prevent literal comment openers in code from starting HTML comments."""
+    protected: list[str] = []
+    fence = ""
+    for line in text.splitlines(keepends=True):
+        content = line.rstrip("\r\n")
+        if fence:
+            protected.append(line.replace("<!--", "\uFFF0"))
+            if is_closing_fence(content, fence):
+                fence = ""
+            continue
+        if opening := opening_fence(content):
+            fence = opening
+            protected.append(line.replace("<!--", "\uFFF0"))
+            continue
+        protected.append(line)
+
+    fenced_protected = "".join(protected)
+    visible: list[str] = []
+    cursor = 0
+    for start, end in inline_code_ranges(fenced_protected):
+        visible.append(fenced_protected[cursor:start])
+        visible.append(fenced_protected[start:end].replace("<!--", "\uFFF0"))
+        cursor = end
+    visible.append(fenced_protected[cursor:])
+    return "".join(visible).replace("\uFFF0", "&lt;!--")
 
 
 def is_escaped(text: str, index: int) -> bool:
@@ -389,6 +477,8 @@ def meaningful_validation(content: str) -> bool:
     if HARD_FAILURE_VALIDATION.search(normalized_content):
         return False
     for line in content.splitlines():
+        if THEMATIC_BREAK.fullmatch(line.strip()):
+            continue
         if re.fullmatch(r"(?:[-+*]|\d+[.)])", line.strip()):
             continue
         stripped = re.sub(
@@ -426,7 +516,7 @@ def clause_has_validation_evidence(clause: str) -> bool:
         return True
     tail = clause[negative.end() :]
     contrast = re.match(
-        r"(?i)^\s*,?\s*(?:but|however|instead)\b[\s,:-]*(.+)$",
+        r"(?i)^\s*,?\s*(?:but|however|instead|because)\b[\s,:-]*(.+)$",
         tail,
     )
     return bool(contrast and clause_has_validation_evidence(contrast.group(1)))
