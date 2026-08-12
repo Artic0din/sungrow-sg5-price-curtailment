@@ -37,7 +37,7 @@ ISSUE_BRANCH = re.compile(
     re.IGNORECASE,
 )
 ISSUE_LINK = re.compile(
-    r"(?i)\b(?P<keyword>fixes|closes|resolves)\s+"
+    r"(?i)\b(?P<keyword>close(?:s|d)?|fix(?:es|ed)?|resolve(?:s|d)?):?[ \t]+"
     r"(?:(?P<repository>[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+))?"
     r"#(?P<number>\d+)\b"
 )
@@ -50,8 +50,9 @@ VALIDATION_HEADINGS = {
     "verification",
 }
 MARKDOWN_HEADING = re.compile(
-    r"^(?P<marks>#{1,6})\s+(?P<title>.*?)(?:\s+#+)?\s*$"
+    r"^ {0,3}(?P<marks>#{1,6})[ \t]+(?P<title>.*?)(?:[ \t]+#+)?[ \t]*$"
 )
+MARKDOWN_SETEXT_UNDERLINE = re.compile(r"^ {0,3}(?P<marks>=+|-+)[ \t]*$")
 FENCE_MARKER = re.compile(
     r"^(?P<indent> {0,3})(?P<fence>`{3,}|~{3,})(?P<info>.*)$"
 )
@@ -74,7 +75,10 @@ POSITIVE_VALIDATION = re.compile(
     r"(?i)\b(?:pass(?:ed|es)?|verif(?:ied|ies)|succeed(?:ed|s)?|successful(?:ly)?|"
     r"completed?)\b"
 )
-HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
+HTML_COMMENT = re.compile(r"<!--.*?(?:-->|$)", re.DOTALL)
+THEMATIC_BREAK = re.compile(
+    r"^(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$"
+)
 GRAPHITE_QUEUE_BRANCH = re.compile(r"^gtmq_[A-Za-z0-9_-]+$")
 GRAPHITE_QUEUE_TITLE_PREFIX = "[Graphite MQ] Draft PR GROUP:"
 GRAPHITE_QUEUE_AUTHOR = "graphite-app[bot]"
@@ -126,12 +130,16 @@ def validate_pull_request(
             validate_linked_issue(
                 pull_request, int(issue_number), issue_lookup, failures
             )
-    elif non_fixes_links:
-        failures.append("pull request must use the exact Fixes #N issue reference")
-    elif qualified_links or len(linked) > 1:
-        failures.append("pull request must close at most one local issue")
-    elif linked:
-        validate_linked_issue(pull_request, int(next(iter(linked))), issue_lookup, failures)
+    elif issue_links:
+        if len(linked) == 1 and not qualified_links:
+            issue_number = next(iter(linked))
+            failures.append(
+                f"issue-backed pull request branch must include issue #{issue_number}"
+            )
+        else:
+            failures.append("issue-backed pull request branch must include its issue number")
+        if non_fixes_links:
+            failures.append("pull request must use the exact Fixes #N issue reference")
     return failures
 
 
@@ -192,25 +200,29 @@ def validation_sections(body: str) -> list[str]:
     current: list[str] | None = None
     section_level = 0
     fence = ""
+    lines = body.splitlines()
+    index = 0
 
-    for line in body.splitlines():
+    while index < len(lines):
+        line = lines[index]
         if fence:
             if is_closing_fence(line, fence):
                 fence = ""
             if current is not None:
                 current.append(line)
+            index += 1
             continue
 
         if opening := opening_fence(line):
             fence = opening
             if current is not None:
                 current.append(line)
+            index += 1
             continue
 
-        heading = MARKDOWN_HEADING.match(line)
-        if heading:
-            level = len(heading.group("marks"))
-            title = heading.group("title").strip().casefold()
+        heading = markdown_heading(lines, index)
+        if heading is not None:
+            level, title, consumed = heading
             if current is not None and level <= section_level:
                 sections.append("\n".join(current))
                 current = None
@@ -218,15 +230,30 @@ def validation_sections(body: str) -> list[str]:
                 current = []
                 section_level = level
             elif current is not None:
-                current.append(line)
+                current.extend(lines[index : index + consumed])
+            index += consumed
             continue
 
         if current is not None:
             current.append(line)
+        index += 1
 
     if current is not None:
         sections.append("\n".join(current))
     return sections
+
+
+def markdown_heading(lines: list[str], index: int) -> tuple[int, str, int] | None:
+    """Parse an ATX or Setext heading outside fenced code."""
+    line = lines[index]
+    if atx := MARKDOWN_HEADING.fullmatch(line):
+        return len(atx.group("marks")), atx.group("title").strip().casefold(), 1
+    if index + 1 >= len(lines) or not line.strip():
+        return None
+    if setext := MARKDOWN_SETEXT_UNDERLINE.fullmatch(lines[index + 1]):
+        level = 1 if setext.group("marks").startswith("=") else 2
+        return level, line.strip().casefold(), 2
+    return None
 
 
 def strip_fenced_code(body: str) -> str:
@@ -274,16 +301,16 @@ def is_closing_fence(line: str, opening: str) -> bool:
 
 def strip_inline_code(text: str) -> str:
     """Remove well-formed Markdown code spans in linear time."""
-    runs: list[tuple[int, int, int]] = []
+    runs: list[tuple[int, int, int, bool]] = []
     index = 0
     while index < len(text):
-        if text[index] != "`" or is_escaped(text, index):
+        if text[index] != "`":
             index += 1
             continue
         end = index + 1
         while end < len(text) and text[end] == "`":
             end += 1
-        runs.append((index, end, end - index))
+        runs.append((index, end, end - index, is_escaped(text, index)))
         index = end
 
     next_same_length: list[int | None] = [None] * len(runs)
@@ -297,11 +324,15 @@ def strip_inline_code(text: str) -> str:
     cursor = 0
     run_index = 0
     while run_index < len(runs):
+        if runs[run_index][3]:
+            run_index += 1
+            continue
         closer_index = next_same_length[run_index]
         if closer_index is None:
             run_index += 1
             continue
         visible.append(text[cursor : runs[run_index][0]])
+        visible.append("\uFFFC")
         cursor = runs[closer_index][1]
         run_index = closer_index + 1
     visible.append(text[cursor:])
@@ -337,32 +368,39 @@ def meaningful_validation(content: str) -> bool:
         ).strip()
         if MARKDOWN_HEADING.fullmatch(stripped):
             continue
+        if THEMATIC_BREAK.fullmatch(stripped):
+            continue
         if opening_fence(stripped):
             continue
         if re.match(r"^\[\s\]", stripped):
             continue
         stripped = re.sub(r"^\[[ xX]\]\s*", "", stripped)
         for clause in stripped.split(";"):
-            clause = clause.strip()
-            if not clause:
-                continue
-            if ISSUE_LINK.fullmatch(clause.rstrip(".,;:!?")):
-                continue
-            if VALIDATION_SCAFFOLD.fullmatch(clause):
-                continue
-            if negative := NEGATIVE_VALIDATION.search(clause):
-                positive_prefix = POSITIVE_VALIDATION.search(clause[: negative.start()])
-                tail = clause[negative.end() :]
-                positive_tail = re.match(
-                    r"(?i)^\s*,?\s*(?:but|however|instead)\b[\s,:-]*(.+)$",
-                    tail,
-                )
-                if positive_prefix is None and (
-                    positive_tail is None or not positive_tail.group(1).strip()
-                ):
-                    continue
-            return True
+            if clause_has_validation_evidence(clause):
+                return True
     return False
+
+
+def clause_has_validation_evidence(clause: str) -> bool:
+    """Evaluate a semicolon-delimited validation clause and contrast tail."""
+    clause = clause.strip()
+    if not clause:
+        return False
+    if ISSUE_LINK.fullmatch(clause.rstrip(".,;:!?")):
+        return False
+    if VALIDATION_SCAFFOLD.fullmatch(clause):
+        return False
+    negative = NEGATIVE_VALIDATION.search(clause)
+    if negative is None:
+        return True
+    if POSITIVE_VALIDATION.search(clause[: negative.start()]):
+        return True
+    tail = clause[negative.end() :]
+    contrast = re.match(
+        r"(?i)^\s*,?\s*(?:but|however|instead)\b[\s,:-]*(.+)$",
+        tail,
+    )
+    return bool(contrast and clause_has_validation_evidence(contrast.group(1)))
 
 
 def render(failures: list[str]) -> str:
