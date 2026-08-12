@@ -62,9 +62,6 @@ VALIDATION_SCAFFOLD = re.compile(
     r"(?i)^(?:results?|commands?|evidence|checks?|tests?|validation|verification):$"
 )
 HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
-FENCED_CODE = re.compile(
-    r"(?ms)^[ \t]*(?P<fence>`{3,}|~{3,})[^\n]*\n.*?^[ \t]*(?P=fence)[ \t]*$"
-)
 INLINE_CODE = re.compile(r"(?s)(?P<ticks>`+).*?(?P=ticks)")
 GRAPHITE_QUEUE_BRANCH = re.compile(r"^gtmq_[A-Za-z0-9_-]+$")
 GRAPHITE_QUEUE_TITLE_PREFIX = "[Graphite MQ] Draft PR GROUP:"
@@ -80,7 +77,7 @@ def validate_pull_request(
     failures: list[str] = []
     title = str(pull_request.get("title") or "")
     body = HTML_COMMENT.sub("", str(pull_request.get("body") or ""))
-    linkable_body = INLINE_CODE.sub("", FENCED_CODE.sub("", body))
+    linkable_body = INLINE_CODE.sub("", strip_fenced_code(body))
     branch = str(pull_request.get("head", {}).get("ref") or "")
     if pull_request.get("draft"):
         failures.append("pull request must be ready for review, not draft")
@@ -190,6 +187,31 @@ def validation_sections(body: str) -> list[str]:
     if current is not None:
         sections.append("\n".join(current))
     return sections
+
+
+def strip_fenced_code(body: str) -> str:
+    visible: list[str] = []
+    fence_character = ""
+    fence_length = 0
+
+    for line in body.splitlines(keepends=True):
+        if fence_character:
+            if re.fullmatch(
+                rf"\s*{re.escape(fence_character)}{{{fence_length},}}\s*", line
+            ):
+                fence_character = ""
+                fence_length = 0
+            continue
+
+        if fence_match := FENCE_MARKER.match(line):
+            fence = fence_match.group("fence")
+            fence_character = fence[0]
+            fence_length = len(fence)
+            continue
+
+        visible.append(line)
+
+    return "".join(visible)
 
 
 def is_graphite_queue_pull_request(pull_request: dict[str, Any]) -> bool:
