@@ -36,7 +36,11 @@ ISSUE_BRANCH = re.compile(
     rf"^(?:{CONVENTIONAL_TYPE_PATTERN}|cursor|issue)/(\d+)(?:-|$)",
     re.IGNORECASE,
 )
-ISSUE_LINK = re.compile(r"(?i)\b(?:fixes|closes|resolves)\s+#(\d+)\b")
+ISSUE_LINK = re.compile(
+    r"(?i)\b(?:fixes|closes|resolves)\s+"
+    r"(?:(?P<repository>[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+))?"
+    r"#(?P<number>\d+)\b"
+)
 VALIDATION_HEADINGS = {
     "test",
     "test plan",
@@ -62,7 +66,6 @@ VALIDATION_SCAFFOLD = re.compile(
     r"(?i)^(?:results?|commands?|evidence|checks?|tests?|validation|verification):$"
 )
 HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
-INLINE_CODE = re.compile(r"(?s)(?P<ticks>`+).*?(?P=ticks)")
 GRAPHITE_QUEUE_BRANCH = re.compile(r"^gtmq_[A-Za-z0-9_-]+$")
 GRAPHITE_QUEUE_TITLE_PREFIX = "[Graphite MQ] Draft PR GROUP:"
 GRAPHITE_QUEUE_AUTHOR = "graphite-app[bot]"
@@ -77,7 +80,7 @@ def validate_pull_request(
     failures: list[str] = []
     title = str(pull_request.get("title") or "")
     body = HTML_COMMENT.sub("", str(pull_request.get("body") or ""))
-    linkable_body = INLINE_CODE.sub("", strip_fenced_code(body))
+    linkable_body = strip_inline_code(strip_fenced_code(body))
     branch = str(pull_request.get("head", {}).get("ref") or "")
     if pull_request.get("draft"):
         failures.append("pull request must be ready for review, not draft")
@@ -90,26 +93,52 @@ def validate_pull_request(
     elif not any(meaningful_validation(section) for section in sections):
         failures.append("pull-request validation section has no verification evidence")
     issue_match = ISSUE_BRANCH.search(branch)
+    issue_links = list(ISSUE_LINK.finditer(linkable_body))
+    linked = {
+        match.group("number")
+        for match in issue_links
+        if match.group("repository") is None
+    }
+    qualified_links = {
+        (match.group("repository"), match.group("number"))
+        for match in issue_links
+        if match.group("repository") is not None
+    }
     if issue_match:
         issue_number = issue_match.group(1)
-        base = pull_request.get("base", {})
-        base_ref = str(base.get("ref") or "")
-        default_branch = str(base.get("repo", {}).get("default_branch") or "")
-        if not default_branch or base_ref != default_branch:
-            expected = default_branch or "the repository default"
-            failures.append(
-                f"issue-backed pull request must target default branch {expected}"
-            )
-        linked = {match.group(1) for match in ISSUE_LINK.finditer(linkable_body)}
-        if linked != {issue_number}:
+        if linked != {issue_number} or qualified_links:
             failures.append(
                 f"issue-backed pull request must close only issue #{issue_number}"
             )
-        elif issue_lookup is not None:
-            issue_is_valid, issue_failure = issue_lookup(int(issue_number))
-            if not issue_is_valid:
-                failures.append(issue_failure)
+        else:
+            validate_linked_issue(
+                pull_request, int(issue_number), issue_lookup, failures
+            )
+    elif qualified_links or len(linked) > 1:
+        failures.append("pull request must close at most one local issue")
+    elif linked:
+        validate_linked_issue(pull_request, int(next(iter(linked))), issue_lookup, failures)
     return failures
+
+
+def validate_linked_issue(
+    pull_request: dict[str, Any],
+    issue_number: int,
+    issue_lookup: IssueLookup | None,
+    failures: list[str],
+) -> None:
+    base = pull_request.get("base", {})
+    base_ref = str(base.get("ref") or "")
+    default_branch = str(base.get("repo", {}).get("default_branch") or "")
+    if not default_branch or base_ref != default_branch:
+        expected = default_branch or "the repository default"
+        failures.append(
+            f"issue-backed pull request must target default branch {expected}"
+        )
+    if issue_lookup is not None:
+        issue_is_valid, issue_failure = issue_lookup(issue_number)
+        if not issue_is_valid:
+            failures.append(issue_failure)
 
 
 def github_issue_lookup(issue_number: int) -> tuple[bool, str]:
@@ -141,8 +170,6 @@ def github_issue_lookup(issue_number: int) -> tuple[bool, str]:
         return False, f"unable to verify linked issue #{issue_number}: {error}"
     if issue.get("pull_request") is not None:
         return False, f"linked item #{issue_number} is a pull request, not an issue"
-    if issue.get("state") != "open":
-        return False, f"linked issue #{issue_number} is closed"
     return True, ""
 
 
@@ -214,6 +241,51 @@ def strip_fenced_code(body: str) -> str:
     return "".join(visible)
 
 
+def strip_inline_code(text: str) -> str:
+    """Remove well-formed Markdown code spans in linear time."""
+    runs: list[tuple[int, int, int]] = []
+    index = 0
+    while index < len(text):
+        if text[index] != "`" or is_escaped(text, index):
+            index += 1
+            continue
+        end = index + 1
+        while end < len(text) and text[end] == "`":
+            end += 1
+        runs.append((index, end, end - index))
+        index = end
+
+    next_same_length: list[int | None] = [None] * len(runs)
+    latest_by_length: dict[int, int] = {}
+    for run_index in range(len(runs) - 1, -1, -1):
+        length = runs[run_index][2]
+        next_same_length[run_index] = latest_by_length.get(length)
+        latest_by_length[length] = run_index
+
+    visible: list[str] = []
+    cursor = 0
+    run_index = 0
+    while run_index < len(runs):
+        closer_index = next_same_length[run_index]
+        if closer_index is None:
+            run_index += 1
+            continue
+        visible.append(text[cursor : runs[run_index][0]])
+        cursor = runs[closer_index][1]
+        run_index = closer_index + 1
+    visible.append(text[cursor:])
+    return "".join(visible)
+
+
+def is_escaped(text: str, index: int) -> bool:
+    backslashes = 0
+    cursor = index - 1
+    while cursor >= 0 and text[cursor] == "\\":
+        backslashes += 1
+        cursor -= 1
+    return backslashes % 2 == 1
+
+
 def is_graphite_queue_pull_request(pull_request: dict[str, Any]) -> bool:
     """Recognize Graphite's authenticated synthetic queue pull request."""
     title = str(pull_request.get("title") or "")
@@ -229,7 +301,9 @@ def is_graphite_queue_pull_request(pull_request: dict[str, Any]) -> bool:
 
 def meaningful_validation(content: str) -> bool:
     for line in content.splitlines():
-        stripped = line.strip().lstrip("-* ").strip()
+        stripped = re.sub(
+            r"^(?:[-+*]|\d+[.)])\s+", "", line.strip()
+        ).strip()
         if MARKDOWN_HEADING.fullmatch(stripped):
             continue
         if re.fullmatch(
@@ -247,8 +321,14 @@ def meaningful_validation(content: str) -> bool:
                 continue
             if VALIDATION_SCAFFOLD.fullmatch(clause):
                 continue
-            if NEGATIVE_VALIDATION.search(clause):
-                continue
+            if negative := NEGATIVE_VALIDATION.search(clause):
+                tail = clause[negative.end() :]
+                positive_tail = re.match(
+                    r"(?i)^\s*,?\s*(?:but|however|instead)\b[\s,:-]*(.+)$",
+                    tail,
+                )
+                if positive_tail is None or not positive_tail.group(1).strip():
+                    continue
             return True
     return False
 
