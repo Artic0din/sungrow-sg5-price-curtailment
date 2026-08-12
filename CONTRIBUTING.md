@@ -163,7 +163,7 @@ git commit -m "feat: add support for SG6.0RS model"
 ### 6. Push and Create PR
 
 ```bash
-git push origin feature/your-feature-name
+git push origin feat/123-your-feature-name
 ```
 
 Then create PR on GitHub.
