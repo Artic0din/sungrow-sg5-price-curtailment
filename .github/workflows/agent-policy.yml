@@ -21,6 +21,20 @@ jobs:
       issues: read # Verify issue-backed pull requests.
       pull-requests: read # Read pull-request metadata.
     steps:
+      - name: Mark pull-request head validation as in progress
+        id: head-check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          check_run_id=$(gh api --method POST "repos/$GITHUB_REPOSITORY/check-runs" \
+            -f name="Validate agent delivery policy" \
+            -f head_sha="$HEAD_SHA" \
+            -f status=in_progress \
+            -f "output[title]=Agent delivery policy" \
+            -f "output[summary]=Pull-request metadata validation is running." \
+            --jq .id)
+          echo "check-run-id=$check_run_id" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           ref: ${{ github.event.repository.default_branch }}
@@ -32,7 +46,7 @@ jobs:
       - name: Publish result against pull-request head
         env:
           GH_TOKEN: ${{ github.token }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          CHECK_RUN_ID: ${{ steps.head-check.outputs.check-run-id }}
           RESULT: ${{ steps.policy.outputs.validation-result }}
         run: |
           if [[ "$RESULT" == "success" ]]; then
@@ -42,9 +56,7 @@ jobs:
             conclusion=failure
             summary="Pull-request metadata violates the agent delivery policy. See the evaluation log for details."
           fi
-          gh api --method POST "repos/$GITHUB_REPOSITORY/check-runs" \
-            -f name="Validate agent delivery policy" \
-            -f head_sha="$HEAD_SHA" \
+          gh api --method PATCH "repos/$GITHUB_REPOSITORY/check-runs/$CHECK_RUN_ID" \
             -f status=completed \
             -f conclusion="$conclusion" \
             -f "output[title]=Agent delivery policy" \
