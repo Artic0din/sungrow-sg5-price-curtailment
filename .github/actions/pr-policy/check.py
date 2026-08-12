@@ -37,7 +37,7 @@ ISSUE_BRANCH = re.compile(
     re.IGNORECASE,
 )
 ISSUE_LINK = re.compile(
-    r"(?i)\b(?:fixes|closes|resolves)\s+"
+    r"(?i)\b(?P<keyword>fixes|closes|resolves)\s+"
     r"(?:(?P<repository>[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+))?"
     r"#(?P<number>\d+)\b"
 )
@@ -52,18 +52,27 @@ VALIDATION_HEADINGS = {
 MARKDOWN_HEADING = re.compile(
     r"^(?P<marks>#{1,6})\s+(?P<title>.*?)(?:\s+#+)?\s*$"
 )
-FENCE_MARKER = re.compile(r"^\s*(?P<fence>`{3,}|~{3,})")
+FENCE_MARKER = re.compile(
+    r"^(?P<indent> {0,3})(?P<fence>`{3,}|~{3,})(?P<info>.*)$"
+)
 NEGATIVE_VALIDATION = re.compile(
     r"(?i)(?:^|:\s*)(?:n/?a|none|not applicable|not required|not run|"
     r"not tested|pending|skipped|todo)(?:\b|[.!])|"
+    r"\b(?:not|never|did\s+not|didn't)\s+"
+    r"(?:complete(?:d)?|pass(?:ed)?|verif(?:y|ied)|succeed(?:ed)?|successful(?:ly)?)\b|"
     r"\btests?\s+(?:were\s+|was\s+)?not\s+(?:run|tested)\b|"
     r"\bno\s+tests?\s+(?:were\s+)?(?:run|required|needed)\b|"
     r"\bthere\s+(?:are|were)\s+no\s+tests?\b|"
-    r"\btests?\s+skipped\b|"
+    r"\btests?\s+(?:(?:was|were)\s+)?skipped\b|"
     r"\bdid\s+not\s+run\s+tests?\b"
 )
 VALIDATION_SCAFFOLD = re.compile(
-    r"(?i)^(?:results?|commands?|evidence|checks?|tests?|validation|verification):$"
+    r"(?i)^(?:(?:results?|commands?|evidence|checks?|tests?|validation|verification):|"
+    r"how was this tested\?)$"
+)
+POSITIVE_VALIDATION = re.compile(
+    r"(?i)\b(?:pass(?:ed|es)?|verif(?:ied|ies)|succeed(?:ed|s)?|successful(?:ly)?|"
+    r"completed?)\b"
 )
 HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
 GRAPHITE_QUEUE_BRANCH = re.compile(r"^gtmq_[A-Za-z0-9_-]+$")
@@ -94,6 +103,9 @@ def validate_pull_request(
         failures.append("pull-request validation section has no verification evidence")
     issue_match = ISSUE_BRANCH.search(branch)
     issue_links = list(ISSUE_LINK.finditer(linkable_body))
+    non_fixes_links = [
+        match for match in issue_links if match.group("keyword").casefold() != "fixes"
+    ]
     linked = {
         match.group("number")
         for match in issue_links
@@ -106,7 +118,7 @@ def validate_pull_request(
     }
     if issue_match:
         issue_number = issue_match.group(1)
-        if linked != {issue_number} or qualified_links:
+        if linked != {issue_number} or qualified_links or non_fixes_links:
             failures.append(
                 f"issue-backed pull request must close only issue #{issue_number}"
             )
@@ -114,6 +126,8 @@ def validate_pull_request(
             validate_linked_issue(
                 pull_request, int(issue_number), issue_lookup, failures
             )
+    elif non_fixes_links:
+        failures.append("pull request must use the exact Fixes #N issue reference")
     elif qualified_links or len(linked) > 1:
         failures.append("pull request must close at most one local issue")
     elif linked:
@@ -180,16 +194,15 @@ def validation_sections(body: str) -> list[str]:
     fence = ""
 
     for line in body.splitlines():
-        stripped = line.lstrip()
         if fence:
-            if re.fullmatch(rf"{re.escape(fence[0])}{{{len(fence)},}}\s*", stripped):
+            if is_closing_fence(line, fence):
                 fence = ""
             if current is not None:
                 current.append(line)
             continue
 
-        if fence_match := FENCE_MARKER.match(line):
-            fence = fence_match.group("fence")
+        if opening := opening_fence(line):
+            fence = opening
             if current is not None:
                 current.append(line)
             continue
@@ -223,15 +236,12 @@ def strip_fenced_code(body: str) -> str:
 
     for line in body.splitlines(keepends=True):
         if fence_character:
-            if re.fullmatch(
-                rf"\s*{re.escape(fence_character)}{{{fence_length},}}\s*", line
-            ):
+            if is_closing_fence(line.rstrip("\r\n"), fence_character * fence_length):
                 fence_character = ""
                 fence_length = 0
             continue
 
-        if fence_match := FENCE_MARKER.match(line):
-            fence = fence_match.group("fence")
+        if fence := opening_fence(line.rstrip("\r\n")):
             fence_character = fence[0]
             fence_length = len(fence)
             continue
@@ -239,6 +249,27 @@ def strip_fenced_code(body: str) -> str:
         visible.append(line)
 
     return "".join(visible)
+
+
+def opening_fence(line: str) -> str | None:
+    """Return a valid top-level Markdown fence opener, if present."""
+    match = FENCE_MARKER.fullmatch(line)
+    if match is None:
+        return None
+    fence = match.group("fence")
+    if fence.startswith("`") and "`" in match.group("info"):
+        return None
+    return fence
+
+
+def is_closing_fence(line: str, opening: str) -> bool:
+    """Recognize a matching Markdown fence closer with valid indentation."""
+    return bool(
+        re.fullmatch(
+            rf" {{0,3}}{re.escape(opening[0])}{{{len(opening)},}}[ \t]*",
+            line,
+        )
+    )
 
 
 def strip_inline_code(text: str) -> str:
@@ -306,9 +337,7 @@ def meaningful_validation(content: str) -> bool:
         ).strip()
         if MARKDOWN_HEADING.fullmatch(stripped):
             continue
-        if re.fullmatch(
-            r"`{3,}(?:[A-Za-z0-9_+-]+)?|~{3,}(?:[A-Za-z0-9_+-]+)?", stripped
-        ):
+        if opening_fence(stripped):
             continue
         if re.match(r"^\[\s\]", stripped):
             continue
@@ -322,12 +351,15 @@ def meaningful_validation(content: str) -> bool:
             if VALIDATION_SCAFFOLD.fullmatch(clause):
                 continue
             if negative := NEGATIVE_VALIDATION.search(clause):
+                positive_prefix = POSITIVE_VALIDATION.search(clause[: negative.start()])
                 tail = clause[negative.end() :]
                 positive_tail = re.match(
                     r"(?i)^\s*,?\s*(?:but|however|instead)\b[\s,:-]*(.+)$",
                     tail,
                 )
-                if positive_tail is None or not positive_tail.group(1).strip():
+                if positive_prefix is None and (
+                    positive_tail is None or not positive_tail.group(1).strip()
+                ):
                     continue
             return True
     return False
