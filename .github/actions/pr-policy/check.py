@@ -38,7 +38,7 @@ ISSUE_BRANCH = re.compile(
 )
 ISSUE_LINK = re.compile(r"(?i)\b(?:fixes|closes|resolves)\s+#(\d+)\b")
 VALIDATION_SECTION = re.compile(
-    r"(?ims)^#{1,3}\s+(?:test plan|tests?|validation|verification)\s*$"
+    r"(?ims)^#{1,3}\s+(?:test plan|test(?:ing|s)?|validation|verification)\s*$"
     r"(?P<content>.*?)(?=^#{1,3}\s+|\Z)"
 )
 NEGATIVE_VALIDATION = re.compile(
