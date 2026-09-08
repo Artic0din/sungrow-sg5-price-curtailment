@@ -1,0 +1,28 @@
+name: Shared repository automation
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  merge_group:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  shared-baseline:
+    name: Shared repository baseline
+    uses: Artic0din/reusable-workflows/.github/workflows/baseline.yml@c913ad3e22a42c75bfcf0029448cda48dc546ff1  # v1.0.0
+    with:
+      required-files: >-
+        README.md, LICENSE, CONTRIBUTING.md, CHANGELOG.md, .gitignore, requirements_test.txt,
+        config/packages/sungrow_control.yaml, config/integrations/modbus_sungrow.yaml,
+        tests/test_configuration.py, AGENTS.md, docs/shared-automation.md, .github/reusable-skills.json,
+        .github/dependabot.yml, .github/workflows/shared-automation.yml, .github/skills/readme-docs/SKILL.md,
+        .github/skills/refresh-instructions/SKILL.md, .github/skills/github-actions/SKILL.md,
+        .github/skills/test-gap-audit/SKILL.md, .github/agents/readme-specialist.agent.md

@@ -1,0 +1,12 @@
+{
+  "schema-version": 1,
+  "source": "Artic0din/reusable-workflows",
+  "revision": "c913ad3e22a42c75bfcf0029448cda48dc546ff1",
+  "files": [
+    ".github/agents/readme-specialist.agent.md",
+    ".github/skills/github-actions/SKILL.md",
+    ".github/skills/readme-docs/SKILL.md",
+    ".github/skills/refresh-instructions/SKILL.md",
+    ".github/skills/test-gap-audit/SKILL.md"
+  ]
+}
