@@ -47,6 +47,10 @@ Do not infer live device, cloud, tenant or application acceptance from baseline 
 
 Dependabot's github-actions entry proposes versioned workflow-pin updates; merging the library alone does not change this repository's pinned code.
 Review and merge each consumer update through its normal PR process.
+For a workflow-pin update, update matching version prose and contract links in this guide and skills.
+Make those changes in the same PR, including Dependabot PRs.
+Do not advance the skill manifest for a workflow-only update.
+Its revision records the copied skills' merge base and changes only through a skill update.
 Update copied skills separately using the old library source, current tailored file and new library source; preserve local adaptations and resolve conflicts explicitly.
 The [skill-update tooling](https://github.com/Artic0din/reusable-workflows/pull/4) is introduced separately; use it after that PR merges.
 Onboarding does not install a recurring job or grant a cross-repository credential.
