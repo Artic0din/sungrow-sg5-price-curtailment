@@ -10,14 +10,14 @@ Do not restart Home Assistant, write Modbus registers or run device probes.
 
 ## Shared checks
 
-This repository uses [Artic0din/reusable-workflows v1.0.0](https://github.com/Artic0din/reusable-workflows/releases/tag/v1.0.0), pinned to `c913ad3e22a42c75bfcf0029448cda48dc546ff1`.
+This repository uses [Artic0din/reusable-workflows v1.1.0](https://github.com/Artic0din/reusable-workflows/releases/tag/v1.1.0), pinned to `ad2f70ec9dbf008652223e77424e9b329c835ad1`.
 The additional shared-automation workflow checks an explicit list of committed project and agent files.
 Existing application workflows retain their own commands, runners, triggers and check names.
 File-existence checks establish repository structure, not application correctness or deployment acceptance.
 CodeQL, generated-output checks and dependency auto-merge are selected only when their contracts apply; this rollout does not enable privileged behavior.
 The library's baseline currently uses chrisreddington/validate-file-exists at its pinned v0.0.10 revision.
 Actions policy must permit that exact action and the shared workflow library.
-See [workflow contracts](https://github.com/Artic0din/reusable-workflows/blob/c913ad3e22a42c75bfcf0029448cda48dc546ff1/docs/workflow-contracts.md) and [consumer setup](https://github.com/Artic0din/reusable-workflows/blob/c913ad3e22a42c75bfcf0029448cda48dc546ff1/docs/consumer-setup.md).
+See [workflow contracts](https://github.com/Artic0din/reusable-workflows/blob/ad2f70ec9dbf008652223e77424e9b329c835ad1/docs/workflow-contracts.md) and [consumer setup](https://github.com/Artic0din/reusable-workflows/blob/ad2f70ec9dbf008652223e77424e9b329c835ad1/docs/consumer-setup.md).
 
 ## Agent skills
 
